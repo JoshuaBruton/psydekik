@@ -2,3 +2,72 @@
 .env
 .pytest_cache
 
+
+# ---------------------------------------------------------
+# Python
+# ---------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# ---------------------------------------------------------
+# Psydekik development backups
+# ---------------------------------------------------------
+*.bak
+*.pre-*
+*.py.pre-*
+*.router-v*-working
+
+# ---------------------------------------------------------
+# Secrets / environment
+# ---------------------------------------------------------
+.env
+.env.*
+*.env
+secrets.env
+secrets/
+*.key
+*.pem
+
+# ---------------------------------------------------------
+# Local models / generated model data
+# ---------------------------------------------------------
+sherpa-onnx-*/
+voice_lab/models/
+
+# ---------------------------------------------------------
+# Runtime/generated audio
+# ---------------------------------------------------------
+*.wav
+*.wave
+
+# ---------------------------------------------------------
+# Caches
+# ---------------------------------------------------------
+.cache/
+.pytest_cache/
+
+# ---------------------------------------------------------
+# OS/editor junk
+# ---------------------------------------------------------
+.DS_Store
+*.swp
+*.swo
+*.save
+
+# ---------------------------------------------------------
+# Psydekik experimental / historical files
+# ---------------------------------------------------------
+chappie/voice/tts.raw-streaming.py
+chappie/voice/tts_bak.py
+chappie/voice/tts_kokoro_backup.py
+
+tests/get_tts_variables.sh
+tests/tts_auditons.sh
+
+# Voice lab: keep source scripts, ignore generated content
+voice_lab/*
+!voice_lab/audition_finalists.py
+!voice_lab/audition_piper.py
