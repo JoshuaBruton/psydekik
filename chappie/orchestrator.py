@@ -202,7 +202,20 @@ class ChappieOrchestrator:
             )
         )
 
-        if explanation_question:
+        needs_web = (
+            self._needs_current_web_information(
+                normalized_message
+            )
+        )
+
+        if needs_web:
+            print(
+                "System routing skipped: "
+                "current web information"
+            )
+            system_intent = None
+
+        elif explanation_question:
             print(
                 "System routing skipped: "
                 "general explanation"
@@ -261,7 +274,8 @@ class ChappieOrchestrator:
 
         self._last_topic = "conversation"
 
-        response_text: str | None = None
+        cloud_display_text: str | None = None
+        cloud_speech_text: str | None = None
 
         needs_web = (
             self._needs_current_web_information(
@@ -279,11 +293,18 @@ class ChappieOrchestrator:
                     f"({self.cloud_brain.model})"
                 )
 
-                response_text = (
+                cloud_response = (
                     await self.cloud_brain.respond(
                         message,
                         use_web=True,
                     )
+                )
+
+                cloud_display_text = (
+                    cloud_response.display_text
+                )
+                cloud_speech_text = (
+                    cloud_response.speech_text
                 )
 
             except Exception as exc:
@@ -296,7 +317,7 @@ class ChappieOrchestrator:
                 )
 
         if (
-            response_text is None
+            cloud_display_text is None
             and self.cloud_brain is not None
         ):
             try:
@@ -305,10 +326,17 @@ class ChappieOrchestrator:
                     f"({self.cloud_brain.model})"
                 )
 
-                response_text = (
+                cloud_response = (
                     await self.cloud_brain.respond(
                         message
                     )
+                )
+
+                cloud_display_text = (
+                    cloud_response.display_text
+                )
+                cloud_speech_text = (
+                    cloud_response.speech_text
                 )
 
             except Exception as exc:
@@ -320,7 +348,7 @@ class ChappieOrchestrator:
                     "Brain route: LOCAL_FALLBACK"
                 )
 
-        if response_text is None:
+        if cloud_display_text is None:
             if self.cloud_brain is None:
                 print(
                     "Brain route: LOCAL_FALLBACK "
@@ -331,11 +359,15 @@ class ChappieOrchestrator:
                 message
             )
 
-            response_text = brain_response.text
+            cloud_display_text = brain_response.text
+            cloud_speech_text = brain_response.text
+
+        if cloud_speech_text is None:
+            cloud_speech_text = cloud_display_text
 
         response = ChappieResponse(
-            display_text=response_text,
-            speech_text=response_text,
+            display_text=cloud_display_text,
+            speech_text=cloud_speech_text,
         )
 
         self.state.record_assistant_message(
