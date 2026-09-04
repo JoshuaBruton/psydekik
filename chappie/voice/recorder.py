@@ -266,10 +266,41 @@ class VoiceRecorder:
         if configured_device is not None:
             return int(configured_device)
 
-        for index, device in enumerate(
-            sd.query_devices()
-        ):
-            device_name = str(device["name"]).casefold()
+        devices = list(
+            enumerate(sd.query_devices())
+        )
+
+        #
+        # Prefer the PipeWire/PulseAudio TONOR source.
+        #
+        # The raw ALSA hw device can become unavailable when
+        # another audio client has recently owned the microphone.
+        # The PipeWire source safely arbitrates access between
+        # Chappie's wake-word listener and command recorder.
+        #
+        for index, device in devices:
+            device_name = str(
+                device["name"]
+            ).casefold()
+
+            if (
+                device["max_input_channels"] > 0
+                and "tonor" in device_name
+                and (
+                    "alsa_input." in device_name
+                    or "mono-fallback" in device_name
+                )
+            ):
+                return index
+
+        #
+        # Fall back to any TONOR input only if the managed
+        # PipeWire/Pulse source is unavailable.
+        #
+        for index, device in devices:
+            device_name = str(
+                device["name"]
+            ).casefold()
 
             if (
                 device["max_input_channels"] > 0

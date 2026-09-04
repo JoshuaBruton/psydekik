@@ -105,7 +105,7 @@ class ChappieCloudBrain:
         if use_web:
             kwargs["tools"] = [
                 {
-                    "type": "web_search",
+                    "type": "web_search_preview",
                 }
             ]
 

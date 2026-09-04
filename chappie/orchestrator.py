@@ -263,7 +263,42 @@ class ChappieOrchestrator:
 
         response_text: str | None = None
 
-        if self.cloud_brain is not None:
+        needs_web = (
+            self._needs_current_web_information(
+                normalized_message
+            )
+        )
+
+        if (
+            needs_web
+            and self.cloud_brain is not None
+        ):
+            try:
+                print(
+                    "Brain route: CLOUD_WEB "
+                    f"({self.cloud_brain.model})"
+                )
+
+                response_text = (
+                    await self.cloud_brain.respond(
+                        message,
+                        use_web=True,
+                    )
+                )
+
+            except Exception as exc:
+                print(
+                    "Cloud web brain failed: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                print(
+                    "Falling back to normal cloud route."
+                )
+
+        if (
+            response_text is None
+            and self.cloud_brain is not None
+        ):
             try:
                 print(
                     "Brain route: CLOUD "
@@ -313,6 +348,108 @@ class ChappieOrchestrator:
         )
 
         return response
+
+    def _needs_current_web_information(
+        self,
+        message: str,
+    ) -> bool:
+        """
+        Return True when answering reliably requires fresh
+        outside information rather than model knowledge.
+        """
+
+        message = message.casefold().strip()
+
+        current_markers = (
+            "right now",
+            "currently",
+            "current ",
+            "current?",
+            "today",
+            "tonight",
+            "this morning",
+            "this afternoon",
+            "this evening",
+            "latest",
+            "most recent",
+            "newest",
+            "recent news",
+            "breaking news",
+            "this week",
+            "this month",
+            "what happened",
+            "what's happening",
+            "what is happening",
+        )
+
+        web_subjects = (
+            "weather",
+            "forecast",
+            "temperature outside",
+            "news",
+            "headline",
+            "stock price",
+            "share price",
+            "market price",
+            "release",
+            "version",
+            "score",
+            "game",
+            "schedule",
+            "traffic",
+            "flight",
+            "president",
+            "governor",
+            "mayor",
+            "ceo",
+            "election",
+        )
+
+        # Weather/forecast questions inherently require
+        # current information unless clearly historical.
+        if (
+            "weather" in message
+            or "forecast" in message
+        ):
+            historical_markers = (
+                "yesterday",
+                "last year",
+                "historically",
+                "average weather",
+                "climate",
+            )
+
+            if not any(
+                marker in message
+                for marker in historical_markers
+            ):
+                return True
+
+        if any(
+            marker in message
+            for marker in current_markers
+        ):
+            return True
+
+        if any(
+            subject in message
+            for subject in web_subjects
+        ):
+            freshness_words = (
+                "what's",
+                "what is",
+                "who is",
+                "when is",
+                "how is",
+            )
+
+            if any(
+                word in message
+                for word in freshness_words
+            ):
+                return True
+
+        return False
 
     def _is_general_explanation_question(
         self,
