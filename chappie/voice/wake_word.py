@@ -8,6 +8,8 @@ import numpy as np
 import sherpa_onnx
 import sounddevice as sd
 
+from chappie.voice.shutdown import shutdown
+
 
 class ChappieWakeWord:
     """Detect the phrase 'Hey Chappie' from the microphone."""
@@ -129,6 +131,9 @@ class ChappieWakeWord:
             block_count = 0
 
             while True:
+                if shutdown.requested:
+                    return ""
+
                 samples, overflowed = (
                     audio_stream.read(
                         self.samples_per_block

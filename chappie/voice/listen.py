@@ -1,4 +1,4 @@
-"""Persistent wake-word-driven voice session for Chappie."""
+"""Persistent conversational voice session for Chappie."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from pathlib import Path
 from chappie.mcp_client import ChappieMCPClient
 from chappie.orchestrator import ChappieOrchestrator
 from chappie.voice.recorder import VoiceRecorder
+from chappie.voice.shutdown import shutdown
 from chappie.voice.stt import SpeechToText
 from chappie.voice.tts import PiperTTS
 from chappie.voice.wake_word import ChappieWakeWord
@@ -16,6 +17,38 @@ from chappie.voice.wake_word import ChappieWakeWord
 DEFAULT_AUDIO_PATH = Path(
     "/tmp/psydekik-command.wav"
 )
+
+INITIAL_COMMAND_TIMEOUT_SECONDS = 8.0
+FOLLOWUP_TIMEOUT_SECONDS = 10.0
+
+
+CONVERSATION_END_PHRASES = {
+    "that's all",
+    "thats all",
+    "thanks chappie",
+    "thanks chappy",
+    "thank you chappie",
+    "thank you chappy",
+    "never mind",
+    "nevermind",
+    "go back to sleep",
+    "back to sleep",
+    "you can go back to sleep",
+}
+
+
+SHUTDOWN_PHRASES = {
+    "exit",
+    "quit",
+    "goodbye chappie",
+    "goodbye chappy",
+    "go offline chappie",
+    "go offline chappy",
+    "shut down chappie",
+    "shutdown chappie",
+    "shut down chappy",
+    "shutdown chappy",
+}
 
 
 class VoiceListener:
@@ -31,18 +64,49 @@ class VoiceListener:
 
     def listen_once(
         self,
+        *,
+        speech_timeout_seconds: float | None = None,
+        followup: bool = False,
     ) -> str:
-        """Record one command and return its transcription."""
+        """Record one utterance and return its transcription."""
 
         print()
-        print("Listening for command...")
 
-        recorded_path = self.recorder.record(
-            output_path=self.audio_path
+        if followup:
+            print("Listening for follow-up...")
+        else:
+            print("Listening for command...")
+
+        original_timeout = (
+            self.recorder.speech_timeout_seconds
         )
 
+        if speech_timeout_seconds is not None:
+            self.recorder.speech_timeout_seconds = (
+                speech_timeout_seconds
+            )
+
+        try:
+            try:
+                recorded_path = self.recorder.record(
+                    output_path=self.audio_path
+                )
+            except TimeoutError:
+                return ""
+
+        finally:
+            self.recorder.speech_timeout_seconds = (
+                original_timeout
+            )
+
         if recorded_path is None:
-            recorded_path = self.audio_path
+            if shutdown.requested:
+                return ""
+
+            return ""
+
+        if shutdown.requested:
+            return ""
 
         print("Transcribing...")
 
@@ -62,15 +126,62 @@ class VoiceListener:
         return text
 
 
+def normalize_message(
+    message: str,
+) -> str:
+    """Normalize spoken text for local control phrases."""
+
+    return (
+        message
+        .strip()
+        .casefold()
+    )
+
+
+async def handle_turn(
+    *,
+    orchestrator: ChappieOrchestrator,
+    tts: PiperTTS,
+    message: str,
+) -> None:
+    """Process and speak one conversational turn."""
+
+    print(
+        "Thinking..."
+    )
+
+    response = (
+        await orchestrator.handle_voice_message(
+            message
+        )
+    )
+
+    print(
+        f"Chappie: "
+        f"{response.display_text}"
+    )
+
+    print(
+        f"Speaking: "
+        f"{response.speech_text}"
+    )
+
+    tts.speak(
+        response.speech_text
+    )
+
+
 async def main() -> None:
-    """Run Chappie's wake-word-driven voice session."""
+    """Run Chappie's wake-word-driven conversation loop."""
+
+    shutdown.install_signal_handlers()
 
     print()
     print("Starting Chappie...")
 
     #
-    # Keep the heavy components alive for the
-    # lifetime of the process.
+    # Heavy components stay alive for the lifetime
+    # of the process.
     #
     listener = VoiceListener()
 
@@ -79,9 +190,6 @@ async def main() -> None:
 
     wake_word = ChappieWakeWord()
 
-    #
-    # Generate/cache the short wake acknowledgment.
-    #
     acknowledgment_path = (
         tts.cache_acknowledgment()
     )
@@ -100,28 +208,41 @@ async def main() -> None:
         )
 
         try:
-            while True:
-                #
-                # IDLE STATE
-                #
-                # Nothing enters STT or the brain until
-                # the wake phrase has been detected.
-                #
+            while not shutdown.requested:
+
+                # ==========================================
+                # SLEEP STATE
+                # ==========================================
+
                 wake_word.wait()
 
-                #
-                # ACKNOWLEDGMENT
-                #
-                print('Chappie: "Sir?"')
+                if shutdown.requested:
+                    break
+
+                print(
+                    'Chappie: "Sir?"'
+                )
 
                 tts.play(
                     acknowledgment_path
                 )
 
-                #
-                # COMMAND STATE
-                #
-                message = listener.listen_once()
+                if shutdown.requested:
+                    break
+
+                # ==========================================
+                # FIRST CONVERSATION TURN
+                # ==========================================
+
+                message = listener.listen_once(
+                    speech_timeout_seconds=(
+                        INITIAL_COMMAND_TIMEOUT_SECONDS
+                    ),
+                    followup=False,
+                )
+
+                if shutdown.requested:
+                    break
 
                 if not message:
                     print(
@@ -130,61 +251,68 @@ async def main() -> None:
                     )
                     continue
 
-                normalized = (
-                    message
-                    .strip()
-                    .lower()
-                )
+                # ==========================================
+                # ACTIVE CONVERSATION
+                # ==========================================
 
-                #
-                # Spoken shutdown command.
-                #
-                if normalized in {
-                    "exit",
-                    "quit",
-                    "goodbye chappie",
-                    "goodbye chappy",
-                    "go offline chappie",
-                    "go offline chappy",
-                }:
-                    print(
-                        "Voice session ended."
-                    )
-                    break
-
-                print(
-                    "Thinking..."
-                )
-
-                response = (
-                    await orchestrator.handle_voice_message(
+                while not shutdown.requested:
+                    normalized = normalize_message(
                         message
                     )
-                )
+
+                    #
+                    # Shut down the entire runtime.
+                    #
+                    if normalized in SHUTDOWN_PHRASES:
+                        print(
+                            "Voice session ended."
+                        )
+                        shutdown.request()
+                        break
+
+                    #
+                    # End only the current conversation.
+                    #
+                    if normalized in CONVERSATION_END_PHRASES:
+                        print(
+                            "Conversation ended. "
+                            "Returning to sleep."
+                        )
+                        break
+
+                    await handle_turn(
+                        orchestrator=orchestrator,
+                        tts=tts,
+                        message=message,
+                    )
+
+                    if shutdown.requested:
+                        break
+
+                    # ======================================
+                    # FOLLOW-UP WINDOW
+                    # ======================================
+
+                    message = listener.listen_once(
+                        speech_timeout_seconds=(
+                            FOLLOWUP_TIMEOUT_SECONDS
+                        ),
+                        followup=True,
+                    )
+
+                    if shutdown.requested:
+                        break
+
+                    if not message:
+                        print(
+                            "Conversation idle. "
+                            "Returning to sleep."
+                        )
+                        break
 
                 #
-                # Rich response for the screen.
-                #
-                print(
-                    f"Chappie: "
-                    f"{response.display_text}"
-                )
-
-                #
-                # Natural conversational response.
-                #
-                print(
-                    f"Speaking: "
-                    f"{response.speech_text}"
-                )
-
-                tts.speak(
-                    response.speech_text
-                )
-
-                #
-                # Loop naturally returns to wake-word
-                # listening after speech completes.
+                # Inner conversation loop has ended.
+                # Outer loop returns to wake-word mode.
                 #
 
         except KeyboardInterrupt:
@@ -194,10 +322,20 @@ async def main() -> None:
             )
 
         finally:
-            await orchestrator.close()
+            try:
+                await orchestrator.close()
+            except asyncio.CancelledError:
+                pass
+
+            print(
+                "Chappie is offline."
+            )
 
 
 if __name__ == "__main__":
-    asyncio.run(
-        main()
-    )
+    try:
+        asyncio.run(
+            main()
+        )
+    except KeyboardInterrupt:
+        pass

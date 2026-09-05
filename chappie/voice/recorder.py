@@ -8,6 +8,8 @@ from time import monotonic
 import numpy as np
 import sounddevice as sd
 
+from chappie.voice.shutdown import shutdown
+
 
 SAMPLE_RATE = 16_000
 CHANNELS = 1
@@ -118,6 +120,9 @@ class VoiceRecorder:
             dtype="int16",
         ) as stream:
             for _ in range(calibration_blocks):
+                if shutdown.requested:
+                    return None
+
                 block, overflowed = stream.read(
                     self.block_size
                 )
@@ -154,6 +159,9 @@ class VoiceRecorder:
             waiting_started_at = monotonic()
 
             while True:
+                if shutdown.requested:
+                    return None
+
                 block, overflowed = stream.read(
                     self.block_size
                 )

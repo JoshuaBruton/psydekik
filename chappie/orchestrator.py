@@ -48,6 +48,7 @@ class ChappieOrchestrator:
         "how's the pie",
         "how is psydekik",
         "how's psydekik",
+        "how is chappie"
     )
 
     def __init__(
@@ -104,14 +105,20 @@ class ChappieOrchestrator:
         if self.cloud_brain is not None:
             try:
                 await self.cloud_brain.close()
+            except asyncio.CancelledError:
+                pass
             except Exception as exc:
                 print(
                     "Cloud brain shutdown warning: "
                     f"{exc}"
                 )
+            finally:
+                self.cloud_brain = None
 
         try:
             await self.brain.close()
+        except asyncio.CancelledError:
+            pass
         except Exception as exc:
             print(
                 "Local brain shutdown warning: "

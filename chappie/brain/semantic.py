@@ -31,6 +31,7 @@ INTENT_EXAMPLES = {
         "Anything looking sketchy?",
         "Is anything wrong with the Pi?",
         "How healthy is the system?",
+        "Give status update for our Pi Server",
     ],
 
     "cpu": [
@@ -49,6 +50,7 @@ INTENT_EXAMPLES = {
         "Is she running warm?",
         "Is the processor overheating?",
         "How are the thermals?",
+        "Is the Pi's temperature at a comfortable level?"
     ],
 
     "memory": [
