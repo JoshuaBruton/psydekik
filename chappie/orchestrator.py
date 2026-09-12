@@ -2,6 +2,7 @@ import asyncio
 import os
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol
 
 from chappie.mcp_client import ChappieMCPClient
@@ -9,6 +10,7 @@ from chappie.brain.semantic import SemanticRouter
 from chappie.brain.conversation import ChappieBrain
 from chappie.brain.cloud import ChappieCloudBrain
 from chappie.brain.state import ChappieSessionState
+from chappie.memory.database import ChappieMemoryDB
 
 
 class MCPClientProtocol(Protocol):
@@ -99,8 +101,29 @@ class ChappieOrchestrator:
             platform_name="Psydekik",
         )
 
+        self.memory_db = ChappieMemoryDB()
+        self.conversation_id = (
+            self.memory_db.start_conversation()
+        )
+
+        print(
+            "Persistent memory ready: "
+            f"conversation {self.conversation_id}"
+        )
+
     async def close(self) -> None:
         """Release resources owned by the orchestrator."""
+
+        try:
+            self.memory_db.end_conversation(
+                self.conversation_id
+            )
+        except Exception as exc:
+            print(
+                "Persistent memory shutdown warning: "
+                f"{exc}"
+            )
+
 
         if self.cloud_brain is not None:
             try:
@@ -125,6 +148,465 @@ class ChappieOrchestrator:
                 f"{exc}"
             )
 
+        try:
+            self.memory_db.close()
+        except Exception as exc:
+            print(
+                "Persistent memory close warning: "
+                f"{exc}"
+            )
+
+    def _handle_local_time_question(
+        self,
+        message: str,
+    ) -> ChappieResponse | None:
+        """Answer date, day, and time from the Pi's local clock."""
+
+        message = message.casefold().strip()
+
+        wants_date = any(
+            phrase in message
+            for phrase in (
+                "what is the date",
+                "what's the date",
+                "whats the date",
+                "today's date",
+                "todays date",
+                "date today",
+                "what is today's date",
+                "what's today's date",
+                "what is the date today",
+                "what's the date today",
+            )
+        )
+
+        wants_day = any(
+            phrase in message
+            for phrase in (
+                "what day is it",
+                "what day is today",
+                "what day of the week is it",
+                "what day and time is it",
+                "what day and date is it",
+            )
+        )
+
+        wants_time = any(
+            phrase in message
+            for phrase in (
+                "what time is it",
+                "what's the time",
+                "whats the time",
+                "current time",
+                "time right now",
+                "what time is it right now",
+                "what day and time is it",
+            )
+        )
+
+        if not (
+            wants_date
+            or wants_day
+            or wants_time
+        ):
+            return None
+
+        now = datetime.now().astimezone()
+
+        day_text = now.strftime("%A")
+        date_text = now.strftime("%B %-d, %Y")
+        time_text = now.strftime("%-I:%M %p")
+        zone_text = now.tzname() or ""
+
+        if wants_time and wants_day:
+            display_text = (
+                f"{day_text}, {date_text}, "
+                f"{time_text} {zone_text}"
+            ).strip()
+
+            speech_text = (
+                f"It's {time_text} on "
+                f"{day_text}, {date_text}."
+            )
+
+        elif wants_time:
+            display_text = (
+                f"{time_text} {zone_text}"
+            ).strip()
+
+            speech_text = (
+                f"It's {time_text}, sir."
+            )
+
+        elif wants_day and wants_date:
+            display_text = (
+                f"{day_text}, {date_text}"
+            )
+
+            speech_text = (
+                f"Today is {day_text}, "
+                f"{date_text}."
+            )
+
+        elif wants_day:
+            display_text = (
+                f"{day_text}, {date_text}"
+            )
+
+            speech_text = (
+                f"Today is {day_text}, sir."
+            )
+
+        else:
+            display_text = (
+                f"{day_text}, {date_text}"
+            )
+
+            speech_text = (
+                f"Today is {day_text}, "
+                f"{date_text}."
+            )
+
+        return ChappieResponse(
+            display_text=display_text,
+            speech_text=speech_text,
+        )
+
+
+    def _get_durable_memory_context(
+        self,
+        *,
+        limit: int = 20,
+    ) -> list[dict[str, str]]:
+        """Return durable memories in a form Luna can use."""
+
+        memories = self.memory_db.recent_memories(
+            limit=limit
+        )
+
+        if not memories:
+            return []
+
+        lines: list[str] = []
+
+        for memory in memories:
+            content = str(
+                memory["content"] or ""
+            ).strip()
+
+            if not content:
+                continue
+
+            lines.append(
+                f"- {content}"
+            )
+
+        if not lines:
+            return []
+
+        memory_text = (
+            "Durable memories about Josh and Psydekik:\n"
+            + "\n".join(lines)
+        )
+
+        return [
+            {
+                "role": "assistant",
+                "content": memory_text,
+            }
+        ]
+
+    def _get_cloud_context(
+        self,
+        current_message: str,
+        *,
+        limit: int = 18,
+    ) -> list[dict[str, str]]:
+        """
+        Return recent canonical conversation history for Luna.
+
+        Every route writes to SQLite, so this context contains
+        LOCAL_STATE, LOCAL_SYSTEM, CLOUD, and CLOUD_WEB turns.
+        """
+
+        rows = self.memory_db.recent_messages(
+            limit=limit + 2
+        )
+
+        #
+        # Only use messages from the current conversation.
+        #
+        rows = [
+            row
+            for row in rows
+            if row["conversation_id"]
+            == self.conversation_id
+        ]
+
+        #
+        # The public handler journals the current user message
+        # before routing it. cloud.respond() also appends the
+        # current message itself, so remove that final duplicate.
+        #
+        if (
+            rows
+            and rows[-1]["role"] == "user"
+            and rows[-1]["text"].strip()
+            == current_message.strip()
+        ):
+            rows = rows[:-1]
+
+        context: list[dict[str, str]] = []
+
+        for row in rows[-limit:]:
+            role = row["role"]
+
+            if role not in {
+                "user",
+                "assistant",
+            }:
+                continue
+
+            content = str(
+                row["text"] or ""
+            ).strip()
+
+            if not content:
+                continue
+
+            context.append(
+                {
+                    "role": role,
+                    "content": content,
+                }
+            )
+
+        return context
+
+    def _handle_memory_management(
+        self,
+        message: str,
+    ) -> ChappieResponse | None:
+        """Inspect or delete durable memories."""
+
+        normalized = message.casefold().strip()
+
+        list_phrases = {
+            "what do you remember about me",
+            "what do you remember",
+            "show me what you remember",
+            "show your memories",
+            "show my memories",
+            "list your memories",
+            "list my memories",
+        }
+
+        if normalized in list_phrases:
+            memories = self.memory_db.recent_memories(
+                limit=25
+            )
+
+            memories = [
+                memory
+                for memory in memories
+                if memory["kind"] != "test"
+            ]
+
+            if not memories:
+                return ChappieResponse(
+                    display_text=(
+                        "I don't currently have any "
+                        "durable memories stored."
+                    ),
+                    speech_text=(
+                        "I don't have any persistent "
+                        "memories stored right now."
+                    ),
+                )
+
+            lines = [
+                f"- {memory['content']}"
+                for memory in memories
+            ]
+
+            return ChappieResponse(
+                display_text=(
+                    "Here's what I currently remember:"
+                    "\n\n"
+                    + "\n".join(lines)
+                ),
+                speech_text=(
+                    f"I currently have {len(memories)} "
+                    "persistent memories stored. "
+                    "I've listed them on screen."
+                ),
+            )
+
+        forget_prefixes = (
+            "forget that ",
+            "forget about ",
+            "forget ",
+            "delete the memory that ",
+            "delete memory about ",
+            "delete memory ",
+        )
+
+        matched_prefix: str | None = None
+
+        for prefix in forget_prefixes:
+            if normalized.startswith(prefix):
+                matched_prefix = prefix
+                break
+
+        if matched_prefix is None:
+            return None
+
+        query = message[
+            len(matched_prefix):
+        ].strip()
+
+        if not query:
+            return ChappieResponse(
+                display_text=(
+                    "Tell me which memory you want "
+                    "me to forget."
+                ),
+                speech_text=(
+                    "Which memory would you like me to forget?"
+                ),
+            )
+
+        forgotten = self.memory_db.forget_memories(
+            query
+        )
+
+        if not forgotten:
+            return ChappieResponse(
+                display_text=(
+                    "I couldn't find a stored memory "
+                    f"matching: {query}"
+                ),
+                speech_text=(
+                    "I couldn't find a matching "
+                    "persistent memory."
+                ),
+            )
+
+        forgotten_text = "\n".join(
+            f"- {memory['content']}"
+            for memory in forgotten
+        )
+
+        return ChappieResponse(
+            display_text=(
+                "Forgotten:\n"
+                + forgotten_text
+            ),
+            speech_text=(
+                "Done. I forgot that."
+            ),
+        )
+
+    def _handle_explicit_memory_write(
+        self,
+        message: str,
+    ) -> ChappieResponse | None:
+        """Store or update a durable memory explicitly."""
+
+        normalized = message.casefold().strip()
+
+        prefixes = (
+            "actually, remember that ",
+            "actually remember that ",
+            "actually, remember ",
+            "actually remember ",
+            "remember that ",
+            "remember ",
+            "don't forget that ",
+            "dont forget that ",
+            "don't forget ",
+            "dont forget ",
+        )
+
+        matched_prefix: str | None = None
+
+        for prefix in prefixes:
+            if normalized.startswith(prefix):
+                matched_prefix = prefix
+                break
+
+        if matched_prefix is None:
+            return None
+
+        content = message[
+            len(matched_prefix):
+        ].strip()
+
+        if not content:
+            return None
+
+        #
+        # Identify a simple factual topic:
+        #
+        # "my favorite color is green"
+        #          ↓
+        # "my favorite color"
+        #
+        # Existing memories about that topic are replaced.
+        #
+        topic: str | None = None
+        lowered_content = content.casefold()
+
+        for separator in (
+            " is ",
+            " are ",
+            " = ",
+        ):
+            if separator in lowered_content:
+                topic = (
+                    lowered_content
+                    .split(separator, 1)[0]
+                    .strip()
+                )
+                break
+
+        replaced = []
+
+        if topic:
+            replaced = (
+                self.memory_db.forget_memories(
+                    topic
+                )
+            )
+
+        self.memory_db.remember(
+            content=content,
+            conversation_id=self.conversation_id,
+            kind="explicit",
+            importance=1.0,
+            confidence=1.0,
+        )
+
+        if replaced:
+            return ChappieResponse(
+                display_text=(
+                    f"I updated that memory: {content}"
+                ),
+                speech_text=(
+                    "Got it. I've updated that."
+                ),
+            )
+
+        return ChappieResponse(
+            display_text=(
+                f"I'll remember that: {content}"
+            ),
+            speech_text=(
+                "Got it. I'll remember that."
+            ),
+        )
+
+
     async def handle_message(
         self,
         message: str,
@@ -141,6 +623,40 @@ class ChappieOrchestrator:
         return response.display_text
 
     async def handle_voice_message(
+        self,
+        message: str,
+    ) -> ChappieResponse:
+        """
+        Persist one complete conversational turn and route it.
+        """
+
+        clean_message = message.strip()
+
+        if clean_message:
+            self.memory_db.add_user_message(
+                conversation_id=(
+                    self.conversation_id
+                ),
+                text=clean_message,
+            )
+
+        response = (
+            await self._handle_voice_message_inner(
+                message
+            )
+        )
+
+        self.memory_db.add_assistant_message(
+            conversation_id=(
+                self.conversation_id
+            ),
+            display_text=response.display_text,
+            speech_text=response.speech_text,
+        )
+
+        return response
+
+    async def _handle_voice_message_inner(
         self,
         message: str,
     ) -> ChappieResponse:
@@ -185,6 +701,66 @@ class ChappieOrchestrator:
                 grounded_response.speech_text,
             )
             return grounded_response
+
+        explicit_memory_response = (
+            self._handle_explicit_memory_write(
+                message
+            )
+        )
+
+        if explicit_memory_response is not None:
+            print("Brain route: MEMORY_WRITE")
+
+            self.state.record_assistant_message(
+                explicit_memory_response.speech_text
+            )
+
+            self.brain.remember_exchange(
+                message,
+                explicit_memory_response.speech_text,
+            )
+
+            return explicit_memory_response
+
+        memory_management_response = (
+            self._handle_memory_management(
+                message
+            )
+        )
+
+        if memory_management_response is not None:
+            print("Brain route: MEMORY_MANAGE")
+
+            self.state.record_assistant_message(
+                memory_management_response.speech_text
+            )
+
+            self.brain.remember_exchange(
+                message,
+                memory_management_response.speech_text,
+            )
+
+            return memory_management_response
+
+        local_time_response = (
+            self._handle_local_time_question(
+                normalized_message
+            )
+        )
+
+        if local_time_response is not None:
+            print("Brain route: LOCAL_TIME")
+
+            self.state.record_assistant_message(
+                local_time_response.speech_text
+            )
+
+            self.brain.remember_exchange(
+                message,
+                local_time_response.speech_text,
+            )
+
+            return local_time_response
 
         contextual_response = (
             self._handle_system_followup(
@@ -284,6 +860,25 @@ class ChappieOrchestrator:
         cloud_display_text: str | None = None
         cloud_speech_text: str | None = None
 
+        cloud_context = self._get_cloud_context(
+            message
+        )
+
+        durable_memory_context = (
+            self._get_durable_memory_context()
+        )
+
+        if durable_memory_context:
+            cloud_context = (
+                durable_memory_context
+                + cloud_context
+            )
+
+        print(
+            "Shared context: "
+            f"{len(cloud_context)} message(s)"
+        )
+
         needs_web = (
             self._needs_current_web_information(
                 normalized_message
@@ -303,6 +898,7 @@ class ChappieOrchestrator:
                 cloud_response = (
                     await self.cloud_brain.respond(
                         message,
+                        context=cloud_context,
                         use_web=True,
                     )
                 )
@@ -335,7 +931,8 @@ class ChappieOrchestrator:
 
                 cloud_response = (
                     await self.cloud_brain.respond(
-                        message
+                        message,
+                        context=cloud_context,
                     )
                 )
 

@@ -71,3 +71,8 @@ tests/tts_auditons.sh
 voice_lab/*
 !voice_lab/audition_finalists.py
 !voice_lab/audition_piper.py
+
+# Chappie persistent private memory
+data/chappie.db
+data/chappie.db-shm
+data/chappie.db-wal
