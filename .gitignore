@@ -76,3 +76,9 @@ voice_lab/*
 data/chappie.db
 data/chappie.db-shm
 data/chappie.db-wal
+
+# Patches 
+Psydekik-step4-live-dashboard.patch
+
+# Backups
+*-backup
