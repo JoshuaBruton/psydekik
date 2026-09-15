@@ -21,10 +21,10 @@ DEFAULT_MODEL_DIR = (
 
 DEFAULT_CACHE_DIR = (
     Path.home()
-    / ".cache/psydekik/tts/piper-sid300"
+    / ".cache/psydekik/tts/piper-sid320"
 )
 
-CHAPPIE_SPEAKER_ID = 300
+CHAPPIE_SPEAKER_ID = 320
 CHAPPIE_SPEED = 1.0
 CHAPPIE_THREADS = 2
 
