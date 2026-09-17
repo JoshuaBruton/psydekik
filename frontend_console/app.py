@@ -3,7 +3,16 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import bootstack as bs
+
+from frontend_console.api.models import (
+    SystemStatus,
+    format_bytes,
+    format_uptime,
+)
+from frontend_console.state.system_state import SystemStatusPoller
 
 
 APP_TITLE = "Psydekik: Chappie"
@@ -26,6 +35,8 @@ def build_app() -> bs.AppShell:
         show_statusbar=True,
         remember_window_state=True,
     )
+
+    widgets: dict[str, Any] = {}
 
     with shell.page_nav() as nav:
         with nav.add_page(
@@ -61,12 +72,12 @@ def build_app() -> bs.AppShell:
                             "SYSTEM",
                             accent="muted",
                         )
-                        bs.Label(
-                            "Online",
+                        widgets["connection"] = bs.Label(
+                            "Connecting...",
                             font="heading-lg",
-                            accent="success",
+                            accent="warning",
                         )
-                        bs.Label(
+                        widgets["last_updated"] = bs.Label(
                             "Waiting for live API data",
                             accent="muted",
                         )
@@ -122,13 +133,28 @@ def build_app() -> bs.AppShell:
                         gap=16,
                         grow_items=True,
                     ):
-                        bs.Label("CPU: --")
-                        bs.Label("Temperature: --")
-                        bs.Label("Memory: --")
-                        bs.Label("Disk: --")
-                        bs.Label("Uptime: --")
+                        widgets["cpu"] = bs.Label(
+                            "CPU: --",
+                            font="heading-sm",
+                        )
+                        widgets["temperature"] = bs.Label(
+                            "Temperature: --",
+                            font="heading-sm",
+                        )
+                        widgets["memory"] = bs.Label(
+                            "Memory: --",
+                            font="heading-sm",
+                        )
+                        widgets["disk"] = bs.Label(
+                            "Disk: --",
+                            font="heading-sm",
+                        )
+                        widgets["uptime"] = bs.Label(
+                            "Uptime: --",
+                            font="heading-sm",
+                        )
 
-                    bs.ProgressBar(
+                    widgets["memory_bar"] = bs.ProgressBar(
                         value=0,
                         max_value=100,
                         accent="primary",
@@ -231,6 +257,70 @@ def build_app() -> bs.AppShell:
                     )
                     bs.Label("Current theme: Nord Dark")
                     bs.ThemeToggle()
+
+    def show_status(status: SystemStatus) -> None:
+        """Apply fresh API data to the dashboard."""
+
+        widgets["connection"].configure(
+            text=f"{status.hostname} online"
+        )
+        widgets["last_updated"].configure(
+            text=(
+                "Updated "
+                f"{status.collected_at.astimezone():%I:%M:%S %p}"
+            )
+        )
+        widgets["cpu"].configure(
+            text=f"CPU: {status.cpu.usage_percent:.1f}%"
+        )
+        widgets["temperature"].configure(
+            text=(
+                "Temperature: "
+                f"{status.cpu.temperature_celsius:.1f}°C"
+            )
+        )
+        widgets["memory"].configure(
+            text=(
+                f"Memory: {status.memory.usage_percent:.1f}%"
+                " · "
+                f"{format_bytes(status.memory.available_bytes)} free"
+            )
+        )
+        widgets["disk"].configure(
+            text=(
+                f"Disk: {status.disk.usage_percent:.1f}%"
+                " · "
+                f"{format_bytes(status.disk.free_bytes)} free"
+            )
+        )
+        widgets["uptime"].configure(
+            text=(
+                "Uptime: "
+                f"{format_uptime(status.uptime_seconds)}"
+            )
+        )
+        widgets["memory_bar"].configure(
+            value=status.memory.usage_percent
+        )
+
+    def show_error(error: Exception) -> None:
+        """Show a friendly disconnected state."""
+
+        widgets["connection"].configure(
+            text="API offline"
+        )
+        widgets["last_updated"].configure(
+            text=str(error)
+        )
+
+    poller = SystemStatusPoller(
+        shell._internal,
+        show_status,
+        show_error,
+        interval_ms=5_000,
+    )
+
+    shell._internal.after(250, poller.start)
 
     return shell
 
