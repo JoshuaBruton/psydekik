@@ -261,57 +261,39 @@ def build_app() -> bs.AppShell:
     def show_status(status: SystemStatus) -> None:
         """Apply fresh API data to the dashboard."""
 
-        widgets["connection"].configure(
-            text=f"{status.hostname} online"
+        widgets["connection"].text = f"{status.hostname} online"
+        widgets["last_updated"].text = (
+            "Updated "
+            f"{status.collected_at.astimezone():%I:%M:%S %p}"
         )
-        widgets["last_updated"].configure(
-            text=(
-                "Updated "
-                f"{status.collected_at.astimezone():%I:%M:%S %p}"
-            )
+        widgets["cpu"].text = (
+            f"CPU: {status.cpu.usage_percent:.1f}%"
         )
-        widgets["cpu"].configure(
-            text=f"CPU: {status.cpu.usage_percent:.1f}%"
+        widgets["temperature"].text = (
+            "Temperature: "
+            f"{status.cpu.temperature_celsius:.1f}°C"
         )
-        widgets["temperature"].configure(
-            text=(
-                "Temperature: "
-                f"{status.cpu.temperature_celsius:.1f}°C"
-            )
+        widgets["memory"].text = (
+            f"Memory: {status.memory.usage_percent:.1f}%"
+            " · "
+            f"{format_bytes(status.memory.available_bytes)} free"
         )
-        widgets["memory"].configure(
-            text=(
-                f"Memory: {status.memory.usage_percent:.1f}%"
-                " · "
-                f"{format_bytes(status.memory.available_bytes)} free"
-            )
+        widgets["disk"].text = (
+            f"Disk: {status.disk.usage_percent:.1f}%"
+            " · "
+            f"{format_bytes(status.disk.free_bytes)} free"
         )
-        widgets["disk"].configure(
-            text=(
-                f"Disk: {status.disk.usage_percent:.1f}%"
-                " · "
-                f"{format_bytes(status.disk.free_bytes)} free"
-            )
+        widgets["uptime"].text = (
+            "Uptime: "
+            f"{format_uptime(status.uptime_seconds)}"
         )
-        widgets["uptime"].configure(
-            text=(
-                "Uptime: "
-                f"{format_uptime(status.uptime_seconds)}"
-            )
-        )
-        widgets["memory_bar"].configure(
-            value=status.memory.usage_percent
-        )
+        widgets["memory_bar"].value = status.memory.usage_percent
 
     def show_error(error: Exception) -> None:
         """Show a friendly disconnected state."""
 
-        widgets["connection"].configure(
-            text="API offline"
-        )
-        widgets["last_updated"].configure(
-            text=str(error)
-        )
+        widgets["connection"].text = "API offline"
+        widgets["last_updated"].text = str(error)
 
     poller = SystemStatusPoller(
         shell._internal,
