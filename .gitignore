@@ -80,7 +80,7 @@ data/chappie.db-wal
 # Patches 
 Psydekik-step4-live-dashboard.patch
 *.patch
-
+patches/
 
 # Backups
 *-backup
