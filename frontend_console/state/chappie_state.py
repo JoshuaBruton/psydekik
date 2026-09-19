@@ -92,9 +92,13 @@ class ChappieVoiceController:
         from chappie.mcp_client import ChappieMCPClient
         from chappie.orchestrator import ChappieOrchestrator
         from chappie.voice.listen import (
+            CONVERSATION_END_PHRASES,
             DEFAULT_AUDIO_PATH,
+            FOLLOWUP_TIMEOUT_SECONDS,
             INITIAL_COMMAND_TIMEOUT_SECONDS,
+            SHUTDOWN_PHRASES,
             VoiceListener,
+            normalize_message,
         )
         from chappie.voice.tts import PiperTTS
 
@@ -123,90 +127,137 @@ class ChappieVoiceController:
                         break
 
                     if command == "talk":
-                        await self._run_turn(
+                        await self._run_conversation(
                             listener=listener,
                             orchestrator=orchestrator,
                             tts=tts,
-                            timeout_seconds=(
+                            initial_timeout_seconds=(
                                 INITIAL_COMMAND_TIMEOUT_SECONDS
                             ),
+                            followup_timeout_seconds=(
+                                FOLLOWUP_TIMEOUT_SECONDS
+                            ),
+                            end_phrases=(
+                                CONVERSATION_END_PHRASES
+                                | SHUTDOWN_PHRASES
+                            ),
+                            normalize=normalize_message,
                         )
             finally:
                 await orchestrator.close()
 
-    async def _run_turn(
+    async def _run_conversation(
         self,
         *,
         listener: Any,
         orchestrator: Any,
         tts: Any,
-        timeout_seconds: float,
+        initial_timeout_seconds: float,
+        followup_timeout_seconds: float,
+        end_phrases: set[str],
+        normalize: Callable[[str], str],
     ) -> None:
+        """Run turns until silence or an explicit ending phrase."""
+
         transcript = ""
+        followup = False
 
         try:
-            self._publish(
-                ChappieMode.LISTENING,
-                "I'm listening...",
-                "Speak naturally. I'll stop when you finish.",
-            )
+            while True:
+                if followup:
+                    headline = "Anything else, sir?"
+                    detail = (
+                        "Listening for a follow-up. Say “that's all” "
+                        "when we're finished."
+                    )
+                    timeout_seconds = followup_timeout_seconds
+                else:
+                    headline = "I'm listening..."
+                    detail = "Speak naturally. I'll stop when you finish."
+                    timeout_seconds = initial_timeout_seconds
 
-            original_timeout = (
-                listener.recorder.speech_timeout_seconds
-            )
-            listener.recorder.speech_timeout_seconds = timeout_seconds
-
-            try:
-                recorded_path = listener.recorder.record(
-                    output_path=listener.audio_path
+                self._publish(
+                    ChappieMode.LISTENING,
+                    headline,
+                    detail,
+                    transcript=transcript if followup else "",
                 )
-            except TimeoutError:
-                recorded_path = None
-            finally:
+
+                original_timeout = (
+                    listener.recorder.speech_timeout_seconds
+                )
                 listener.recorder.speech_timeout_seconds = (
-                    original_timeout
+                    timeout_seconds
                 )
 
-            if recorded_path is None:
-                self._publish_idle(
-                    "I didn't hear a command. Tap Talk to try again."
+                try:
+                    try:
+                        recorded_path = listener.recorder.record(
+                            output_path=listener.audio_path
+                        )
+                    except TimeoutError:
+                        recorded_path = None
+                finally:
+                    listener.recorder.speech_timeout_seconds = (
+                        original_timeout
+                    )
+
+                if recorded_path is None:
+                    if followup:
+                        detail = (
+                            "Conversation complete. Tap Talk whenever "
+                            "you need me."
+                        )
+                    else:
+                        detail = (
+                            "I didn't hear a command. Tap Talk to try "
+                            "again."
+                        )
+
+                    self._publish_idle(
+                        detail,
+                        transcript=transcript,
+                    )
+                    return
+
+                self._publish(
+                    ChappieMode.TRANSCRIBING,
+                    "Putting words to that...",
+                    "Local speech recognition is processing the recording.",
                 )
-                return
+                transcript = listener.stt.transcribe(recorded_path)
 
-            self._publish(
-                ChappieMode.TRANSCRIBING,
-                "Putting words to that...",
-                "Local speech recognition is processing the recording.",
-            )
-            transcript = listener.stt.transcribe(recorded_path)
+                if not transcript:
+                    self._publish_idle(
+                        "I couldn't make that out. Tap Talk to try again."
+                    )
+                    return
 
-            if not transcript:
-                self._publish_idle(
-                    "I couldn't make that out. Tap Talk to try again."
+                if normalize(transcript) in end_phrases:
+                    self._publish_idle(
+                        "Conversation complete. I'll be right here.",
+                        transcript=transcript,
+                    )
+                    return
+
+                self._publish(
+                    ChappieMode.THINKING,
+                    "Working on it...",
+                    "Chappie is choosing the right tool and response.",
+                    transcript=transcript,
                 )
-                return
+                response = await orchestrator.handle_voice_message(
+                    transcript
+                )
 
-            self._publish(
-                ChappieMode.THINKING,
-                "Working on it...",
-                "Chappie is choosing the right tool and response.",
-                transcript=transcript,
-            )
-            response = await orchestrator.handle_voice_message(
-                transcript
-            )
-
-            self._publish(
-                ChappieMode.SPEAKING,
-                response.display_text,
-                "Speaking through the Pi now.",
-                transcript=transcript,
-            )
-            tts.speak(response.speech_text)
-            self._publish_idle(
-                response.display_text,
-                transcript=transcript,
-            )
+                self._publish(
+                    ChappieMode.SPEAKING,
+                    response.display_text,
+                    "Speaking through the Pi now.",
+                    transcript=transcript,
+                )
+                tts.speak(response.speech_text)
+                followup = True
         except Exception as exc:
             self._publish_error(exc, transcript=transcript)
         finally:
