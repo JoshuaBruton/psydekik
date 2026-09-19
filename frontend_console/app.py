@@ -5,6 +5,9 @@ from __future__ import annotations
 import bootstack as bs
 
 from frontend_console.pages.home import HomePage
+from frontend_console.state.chappie_state import (
+    ChappieVoiceController,
+)
 from frontend_console.state.system_state import SystemStatusPoller
 
 
@@ -142,7 +145,14 @@ def build_app() -> bs.AppShell:
         interval_ms=5_000,
     )
 
+    voice_controller = ChappieVoiceController(
+        shell._internal,
+        home_page.show_chappie_state,
+    )
+    home_page.bind_talk(voice_controller.request_turn)
+
     shell._internal.after(250, poller.start)
+    shell._internal.after(500, voice_controller.start)
 
     return shell
 

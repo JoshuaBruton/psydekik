@@ -11,7 +11,11 @@ from frontend_console.api.models import (
     format_bytes,
     format_uptime,
 )
+from frontend_console.components.chappie_presence import (
+    ChappiePresenceCard,
+)
 from frontend_console.components.metric_card import MetricCard
+from frontend_console.state.chappie_state import ChappieSnapshot
 
 
 class HomePage:
@@ -43,7 +47,7 @@ class HomePage:
                 weights=[2, 1],
                 vertical_items="stretch",
             ):
-                self._build_chappie_card()
+                self.chappie_card = ChappiePresenceCard()
 
                 with bs.Column(
                     gap=16,
@@ -103,34 +107,15 @@ class HomePage:
                     wrap_width=760,
                 )
 
-    def _build_chappie_card(self) -> None:
-        with bs.Card(
-            padding=22,
-            gap=12,
-            grow_items=True,
-            horizontal_items="stretch",
-            accent="primary",
-        ):
-            bs.Label(
-                "CHAPPIE",
-                icon="stars",
-                accent="muted",
-            )
-            bs.Label(
-                "Ready when you are, sir.",
-                font="heading-lg",
-                accent="primary",
-            )
-            bs.Label(
-                "Idle · Voice online",
-                accent="success",
-            )
-            bs.Label(
-                "Conversation, reminders, family coordination, and "
-                "home intelligence will gather here.",
-                accent="muted",
-                wrap_width=560,
-            )
+    def bind_talk(self, handler: Any) -> None:
+        """Connect the Chappie card to its voice controller."""
+
+        self.chappie_card.bind_talk(handler)
+
+    def show_chappie_state(self, snapshot: ChappieSnapshot) -> None:
+        """Render a voice state update on the dashboard."""
+
+        self.chappie_card.render(snapshot)
 
     def _build_system_card(self) -> None:
         with bs.Card(
