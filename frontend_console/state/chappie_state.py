@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import atexit
 import asyncio
 from dataclasses import dataclass
 from enum import StrEnum
 from queue import Empty, Queue, SimpleQueue
+import re
 from threading import Event, Thread
 from typing import Any, Callable
 
@@ -47,6 +49,7 @@ class ChappieVoiceController:
         self._ready = Event()
         self._busy = Event()
         self._started = False
+        atexit.register(self.stop)
 
     def start(self) -> None:
         """Start the persistent voice runtime and UI event pump."""
@@ -78,6 +81,12 @@ class ChappieVoiceController:
 
         self._busy.set()
         self._commands.put("talk")
+
+    def stop(self) -> None:
+        """Request a graceful worker shutdown without blocking Tk."""
+
+        self._ready.clear()
+        self._commands.put(None)
 
     def _thread_main(self) -> None:
         try:
@@ -119,9 +128,11 @@ class ChappieVoiceController:
 
             try:
                 while True:
-                    command = await asyncio.to_thread(
-                        self._commands.get
-                    )
+                    try:
+                        command = self._commands.get_nowait()
+                    except Empty:
+                        await asyncio.sleep(0.1)
+                        continue
 
                     if command is None:
                         break
@@ -233,7 +244,11 @@ class ChappieVoiceController:
                     )
                     return
 
-                if normalize(transcript) in end_phrases:
+                if self._is_end_phrase(
+                    transcript,
+                    end_phrases=end_phrases,
+                    normalize=normalize,
+                ):
                     self._publish_idle(
                         "Conversation complete. I'll be right here.",
                         transcript=transcript,
@@ -262,6 +277,74 @@ class ChappieVoiceController:
             self._publish_error(exc, transcript=transcript)
         finally:
             self._busy.clear()
+
+    @staticmethod
+    def _is_end_phrase(
+        transcript: str,
+        *,
+        end_phrases: set[str],
+        normalize: Callable[[str], str],
+    ) -> bool:
+        """Recognize natural, standalone conversation-ending phrases."""
+
+        extra_phrases = {
+            "thanks",
+            "thank you",
+            "that's it",
+            "thats it",
+            "that is all",
+            "nothing else",
+            "no thanks",
+            "no thank you",
+            "we're done",
+            "were done",
+            "go to sleep",
+            "good night",
+            "goodnight",
+        }
+
+        def clean(value: str) -> str:
+            cleaned = normalize(value).replace("’", "'")
+            cleaned = re.sub(r"[^a-z0-9\s]", "", cleaned)
+            return " ".join(cleaned.split())
+
+        phrase = clean(transcript)
+
+        polite_prefixes = (
+            "okay ",
+            "ok ",
+            "alright ",
+            "all right ",
+            "well ",
+        )
+        polite_suffixes = (
+            " chappie",
+            " chappy",
+            " please",
+            " sir",
+        )
+
+        changed = True
+
+        while changed:
+            changed = False
+
+            for prefix in polite_prefixes:
+                if phrase.startswith(prefix):
+                    phrase = phrase[len(prefix):].strip()
+                    changed = True
+
+            for suffix in polite_suffixes:
+                if phrase.endswith(suffix):
+                    phrase = phrase[:-len(suffix)].strip()
+                    changed = True
+
+        accepted = {
+            clean(candidate)
+            for candidate in end_phrases | extra_phrases
+        }
+
+        return phrase in accepted
 
     def _publish_idle(
         self,

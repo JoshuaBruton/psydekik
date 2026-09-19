@@ -161,7 +161,11 @@ def main() -> None:
     """Start the Psydekik desktop console."""
 
     app = build_app()
-    app.run()
+
+    try:
+        app.run()
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == "__main__":
