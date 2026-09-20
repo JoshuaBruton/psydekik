@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -20,6 +21,23 @@ class MCPClientProtocol(Protocol):
         self,
     ) -> dict[str, Any]:
         """Return current Raspberry Pi system information."""
+
+
+    async def get_file_organizer_status(
+        self,
+    ) -> dict[str, Any]:
+        """Return the file organizer's current status."""
+
+    async def preview_file_organization(
+        self,
+        filename: str,
+    ) -> dict[str, Any]:
+        """Preview where a filename would be organized."""
+
+    async def get_file_organization_rules(
+        self,
+    ) -> dict[str, Any]:
+        """Return supported organizer categories and extensions."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -779,6 +797,27 @@ class ChappieOrchestrator:
             )
             return contextual_response
 
+        organizer_response = (
+            await self._handle_file_organizer_request(
+                normalized_message
+            )
+        )
+
+        if organizer_response is not None:
+            print("Brain route: LOCAL_FILE_ORGANIZER")
+
+            self._last_topic = "file_organizer"
+
+            self.state.record_assistant_message(
+                organizer_response.speech_text
+            )
+            self.brain.remember_exchange(
+                message,
+                organizer_response.speech_text,
+            )
+
+            return organizer_response
+
         explanation_question = (
             self._is_general_explanation_question(
                 normalized_message
@@ -1422,6 +1461,238 @@ class ChappieOrchestrator:
                         "models and data."
                     ),
                 )
+
+        return None
+
+    async def _handle_file_organizer_request(
+        self,
+        message: str,
+    ) -> ChappieResponse | None:
+        """Handle explicit file-organizer requests through MCP."""
+
+        request = self._detect_file_organizer_request(
+            message
+        )
+
+        if request is None:
+            return None
+
+        intent, filename = request
+
+        if intent == "status":
+            status = (
+                await self.mcp_client.get_file_organizer_status()
+            )
+
+            active = status.get(
+                "service_active",
+                "unknown",
+            )
+            enabled = status.get(
+                "service_enabled",
+                "unknown",
+            )
+            pending_count = int(
+                status.get("pending_count", 0)
+            )
+            inbox = status.get(
+                "inbox",
+                "the drop-box",
+            )
+
+            if active == "active":
+                state_text = "running"
+            else:
+                state_text = active
+
+            return ChappieResponse(
+                display_text=(
+                    f"File organizer: {state_text}. "
+                    f"Boot status: {enabled}. "
+                    f"Pending files: {pending_count}. "
+                    f"Inbox: {inbox}"
+                ),
+                speech_text=(
+                    f"The file organizer is {state_text}, sir. "
+                    f"It has {pending_count} "
+                    f"pending file"
+                    f"{'' if pending_count == 1 else 's'}."
+                ),
+            )
+
+        if intent == "rules":
+            rules = (
+                await self.mcp_client.get_file_organization_rules()
+            )
+            categories = rules.get("categories", {})
+            extension_count = sum(
+                len(extensions)
+                for extensions in categories.values()
+            )
+
+            category_names = [
+                category.replace("media/", "")
+                for category in categories
+            ]
+            category_text = ", ".join(category_names)
+
+            return ChappieResponse(
+                display_text=(
+                    f"The organizer recognizes "
+                    f"{extension_count} extensions across: "
+                    f"{category_text}. "
+                    "Unrecognized formats go to unknown."
+                ),
+                speech_text=(
+                    f"I recognize {extension_count} file "
+                    f"extensions across documents, code, "
+                    f"images, GIFs, video, audio, and "
+                    f"compressed files, sir. "
+                    f"Anything unfamiliar goes into unknown."
+                ),
+            )
+
+        if intent == "preview" and filename is not None:
+            preview = (
+                await self.mcp_client.preview_file_organization(
+                    filename
+                )
+            )
+
+            if preview.get("status") == "rejected":
+                message_text = preview.get(
+                    "message",
+                    "That filename was rejected.",
+                )
+                return ChappieResponse(
+                    display_text=message_text,
+                    speech_text=(
+                        "I couldn't safely preview that "
+                        "filename, sir."
+                    ),
+                )
+
+            category = str(
+                preview.get("category", "unknown")
+            )
+            destination = str(
+                preview.get(
+                    "destination",
+                    "an unknown destination",
+                )
+            )
+
+            return ChappieResponse(
+                display_text=(
+                    f"{filename} would be categorized as "
+                    f"{category} and moved to {destination}."
+                ),
+                speech_text=(
+                    f"I would place {filename} in the "
+                    f"{category.replace('media/', '')} "
+                    f"category, sir."
+                ),
+            )
+
+        return None
+
+    @staticmethod
+    def _extract_organizer_filename(
+        message: str,
+    ) -> str | None:
+        """Extract one safe-looking filename from a request."""
+
+        quoted_match = re.search(
+            r"""[`'"]([^`'"]+\.[a-z0-9]{1,10})[`'"]""",
+            message,
+            flags=re.IGNORECASE,
+        )
+
+        if quoted_match is not None:
+            return quoted_match.group(1).strip()
+
+        token_match = re.search(
+            r"\b([a-z0-9][a-z0-9_.()-]*\.[a-z0-9]{1,10})\b",
+            message,
+            flags=re.IGNORECASE,
+        )
+
+        if token_match is not None:
+            return token_match.group(1)
+
+        return None
+
+    def _detect_file_organizer_request(
+        self,
+        message: str,
+    ) -> tuple[str, str | None] | None:
+        """Detect explicit organizer requests without broad guessing."""
+
+        organizer_terms = (
+            "file organizer",
+            "file organiser",
+            "file watcher",
+            "drop-box",
+            "drop box",
+            "incoming folder",
+        )
+        organizer_context = any(
+            term in message
+            for term in organizer_terms
+        )
+
+        status_terms = (
+            "status",
+            "running",
+            "active",
+            "working",
+            "online",
+            "how is",
+            "how's",
+        )
+
+        if (
+            organizer_context
+            and any(term in message for term in status_terms)
+        ):
+            return ("status", None)
+
+        rule_phrases = (
+            "what file types can you organize",
+            "what file types do you organize",
+            "which file types can you organize",
+            "what kinds of files can you organize",
+            "what does the file organizer support",
+            "file organizer rules",
+            "organizer categories",
+        )
+
+        if any(
+            phrase in message
+            for phrase in rule_phrases
+        ):
+            return ("rules", None)
+
+        filename = self._extract_organizer_filename(
+            message
+        )
+        preview_terms = (
+            "where would",
+            "where will",
+            "what folder",
+            "what category",
+            "organize",
+            "categorize",
+            "file organizer",
+            "drop-box",
+            "drop box",
+        )
+
+        if (
+            filename is not None
+            and any(term in message for term in preview_terms)
+        ):
+            return ("preview", filename)
 
         return None
 

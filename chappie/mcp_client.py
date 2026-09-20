@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from contextlib import AsyncExitStack
 from typing import Any, Self
 
@@ -57,22 +59,58 @@ class ChappieMCPClient:
         result = await self.client.list_tools()
         return [tool.name for tool in result.tools]
 
-    async def get_system_status(self) -> dict[str, Any]:
-        """Request the Raspberry Pi's system status through MCP."""
+    async def _call_structured_tool(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Call an MCP tool and require a structured dictionary response."""
 
         result = await self.client.call_tool(
-            "get_system_status",
-            {},
+            tool_name,
+            arguments or {},
         )
 
         if result.is_error:
             raise RuntimeError(
-                f"get_system_status failed: {result.content}"
+                f"{tool_name} failed: {result.content}"
             )
 
         if result.structured_content is None:
             raise RuntimeError(
-                "get_system_status returned no structured content."
+                f"{tool_name} returned no structured content."
             )
 
         return result.structured_content
+
+    async def get_system_status(self) -> dict[str, Any]:
+        """Request the Raspberry Pi's system status through MCP."""
+
+        return await self._call_structured_tool(
+            "get_system_status"
+        )
+
+    async def get_file_organizer_status(self) -> dict[str, Any]:
+        """Request the file organizer's current status through MCP."""
+
+        return await self._call_structured_tool(
+            "get_file_organizer_status"
+        )
+
+    async def preview_file_organization(
+        self,
+        filename: str,
+    ) -> dict[str, Any]:
+        """Preview a file's destination through MCP."""
+
+        return await self._call_structured_tool(
+            "preview_file_organization",
+            {"filename": filename},
+        )
+
+    async def get_file_organization_rules(self) -> dict[str, Any]:
+        """Request the organizer's configured categories through MCP."""
+
+        return await self._call_structured_tool(
+            "get_file_organization_rules"
+        )
