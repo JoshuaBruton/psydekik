@@ -85,3 +85,7 @@ patches/
 # Backups
 *-backup
 
+
+# File-organizer runtime data
+chappie/assets/
+drop-box/incoming/

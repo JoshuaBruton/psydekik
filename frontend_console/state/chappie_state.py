@@ -238,6 +238,8 @@ class ChappieVoiceController:
                 )
                 transcript = listener.stt.transcribe(recorded_path)
 
+                print(f'STT transcript: "{transcript}"')
+
                 if not transcript:
                     self._publish_idle(
                         "I couldn't make that out. Tap Talk to try again."

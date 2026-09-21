@@ -1594,31 +1594,153 @@ class ChappieOrchestrator:
                 ),
             )
 
+        if intent == "clarify":
+            return ChappieResponse(
+                display_text=(
+                    "I know you're asking about the file "
+                    "organizer, but I couldn't identify a "
+                    "specific status, file-type, or destination "
+                    "request. Try asking where a PDF or WebP "
+                    "file would go."
+                ),
+                speech_text=(
+                    "I know you're asking about the file "
+                    "organizer, sir, but I need a file type or "
+                    "filename to check."
+                ),
+            )
+
         return None
 
     @staticmethod
+    def _normalize_spoken_file_terms(
+        message: str,
+    ) -> str:
+        """Normalize common STT renderings of file extensions."""
+
+        normalized = " ".join(
+            message.casefold().split()
+        )
+
+        extension_aliases = (
+            ("web p", "webp"),
+            ("p d f", "pdf"),
+            ("j p e g", "jpeg"),
+            ("jay peg", "jpeg"),
+            ("j peg", "jpeg"),
+            ("j p g", "jpg"),
+            ("p n g", "png"),
+            ("g i f", "gif"),
+            ("t x t", "txt"),
+            ("c s v", "csv"),
+            ("m p four", "mp4"),
+            ("m p 4", "mp4"),
+            ("m p three", "mp3"),
+            ("m p 3", "mp3"),
+        )
+
+        for spoken, extension in extension_aliases:
+            normalized = re.sub(
+                rf"\b{re.escape(spoken)}\b",
+                extension,
+                normalized,
+            )
+
+        normalized = re.sub(
+            r"\s+dot\s+",
+            ".",
+            normalized,
+        )
+
+        return normalized
+
+    @classmethod
     def _extract_organizer_filename(
+        cls,
         message: str,
     ) -> str | None:
-        """Extract one safe-looking filename from a request."""
+        """Extract a written or spoken filename from a request."""
+
+        normalized = cls._normalize_spoken_file_terms(
+            message
+        )
 
         quoted_match = re.search(
             r"""[`'"]([^`'"]+\.[a-z0-9]{1,10})[`'"]""",
-            message,
+            normalized,
             flags=re.IGNORECASE,
         )
 
         if quoted_match is not None:
             return quoted_match.group(1).strip()
 
+        destination_match = re.search(
+            (
+                r"\bwhere (?:would|will)\s+"
+                r"(.+?\.[a-z0-9]{1,10})"
+                r"(?:\s+(?:go|be placed|be moved))?"
+                r"[?.!]*$"
+            ),
+            normalized,
+            flags=re.IGNORECASE,
+        )
+
+        if destination_match is not None:
+            candidate = destination_match.group(1).strip()
+            candidate = re.sub(
+                r"^(?:the\s+)?file\s+",
+                "",
+                candidate,
+            )
+            return re.sub(r"\s+", "-", candidate)
+
         token_match = re.search(
             r"\b([a-z0-9][a-z0-9_.()-]*\.[a-z0-9]{1,10})\b",
-            message,
+            normalized,
             flags=re.IGNORECASE,
         )
 
         if token_match is not None:
             return token_match.group(1)
+
+        spoken_extensions = (
+            "webp",
+            "pdf",
+            "png",
+            "jpg",
+            "jpeg",
+            "gif",
+            "txt",
+            "csv",
+            "json",
+            "py",
+            "zip",
+            "mp4",
+            "mp3",
+            "wav",
+            "flac",
+        )
+
+        destination_question = any(
+            phrase in normalized
+            for phrase in (
+                "where do",
+                "where does",
+                "where would",
+                "where will",
+                "what folder",
+                "what category",
+            )
+        )
+
+        if destination_question:
+            words = set(
+                re.findall(r"[a-z0-9]+", normalized)
+            )
+
+            for extension in spoken_extensions:
+                if extension in words:
+                    return f"example.{extension}"
 
         return None
 
@@ -1626,7 +1748,14 @@ class ChappieOrchestrator:
         self,
         message: str,
     ) -> tuple[str, str | None] | None:
-        """Detect explicit organizer requests without broad guessing."""
+        """Detect organizer requests while tolerating STT variation."""
+
+        normalized = self._normalize_spoken_file_terms(
+            message
+        )
+        words = set(
+            re.findall(r"[a-z0-9]+", normalized)
+        )
 
         organizer_terms = (
             "file organizer",
@@ -1637,7 +1766,7 @@ class ChappieOrchestrator:
             "incoming folder",
         )
         organizer_context = any(
-            term in message
+            term in normalized
             for term in organizer_terms
         )
 
@@ -1653,7 +1782,10 @@ class ChappieOrchestrator:
 
         if (
             organizer_context
-            and any(term in message for term in status_terms)
+            and any(
+                term in normalized
+                for term in status_terms
+            )
         ):
             return ("status", None)
 
@@ -1662,27 +1794,65 @@ class ChappieOrchestrator:
             "what file types do you organize",
             "which file types can you organize",
             "what kinds of files can you organize",
+            "what types of files can you organize",
+            "what types of files do you organize",
             "what does the file organizer support",
             "file organizer rules",
             "organizer categories",
         )
 
-        if any(
-            phrase in message
-            for phrase in rule_phrases
+        file_words = bool(
+            words.intersection(
+                {"file", "files", "format", "formats"}
+            )
+        )
+        type_words = bool(
+            words.intersection(
+                {"type", "types", "kind", "kinds", "format", "formats"}
+            )
+        )
+        capability_words = bool(
+            words.intersection(
+                {
+                    "organize",
+                    "organise",
+                    "support",
+                    "supports",
+                    "recognize",
+                    "recognise",
+                    "handle",
+                    "accept",
+                }
+            )
+        )
+
+        if (
+            any(
+                phrase in normalized
+                for phrase in rule_phrases
+            )
+            or (
+                file_words
+                and type_words
+                and capability_words
+            )
         ):
             return ("rules", None)
 
         filename = self._extract_organizer_filename(
-            message
+            normalized
         )
         preview_terms = (
+            "where do",
+            "where does",
             "where would",
             "where will",
             "what folder",
             "what category",
             "organize",
+            "organise",
             "categorize",
+            "categorise",
             "file organizer",
             "drop-box",
             "drop box",
@@ -1690,9 +1860,47 @@ class ChappieOrchestrator:
 
         if (
             filename is not None
-            and any(term in message for term in preview_terms)
+            and any(
+                term in normalized
+                for term in preview_terms
+            )
         ):
             return ("preview", filename)
+
+        file_context = bool(
+            words.intersection(
+                {
+                    "file",
+                    "files",
+                    "image",
+                    "images",
+                    "photo",
+                    "photos",
+                    "document",
+                    "documents",
+                }
+            )
+        )
+        destination_context = any(
+            phrase in normalized
+            for phrase in (
+                "where do",
+                "where does",
+                "where would",
+                "where will",
+                "what folder",
+                "what category",
+            )
+        )
+
+        if (
+            organizer_context
+            or (
+                file_context
+                and destination_context
+            )
+        ):
+            return ("clarify", None)
 
         return None
 
