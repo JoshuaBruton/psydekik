@@ -6,7 +6,7 @@ import atexit
 import asyncio
 from dataclasses import dataclass
 from enum import StrEnum
-from queue import Empty, Queue, SimpleQueue
+from queue import Empty, SimpleQueue
 import re
 from threading import Event, Thread
 from typing import Any, Callable
@@ -16,6 +16,7 @@ class ChappieMode(StrEnum):
     """Visible stages of one Chappie interaction."""
 
     STARTING = "Starting"
+    SLEEPING = "Sleeping"
     IDLE = "Idle"
     LISTENING = "Listening"
     TRANSCRIBING = "Transcribing"
@@ -44,10 +45,12 @@ class ChappieVoiceController:
     ) -> None:
         self.scheduler = scheduler
         self.on_state = on_state
-        self._commands: Queue[str | None] = Queue()
         self._events: SimpleQueue[ChappieSnapshot] = SimpleQueue()
         self._ready = Event()
         self._busy = Event()
+        self._stop_requested = Event()
+        self._wake_interrupt = Event()
+        self._manual_request = Event()
         self._started = False
         atexit.register(self.stop)
 
@@ -80,13 +83,15 @@ class ChappieVoiceController:
             return
 
         self._busy.set()
-        self._commands.put("talk")
+        self._manual_request.set()
+        self._wake_interrupt.set()
 
     def stop(self) -> None:
         """Request a graceful worker shutdown without blocking Tk."""
 
         self._ready.clear()
-        self._commands.put(None)
+        self._stop_requested.set()
+        self._wake_interrupt.set()
 
     def _thread_main(self) -> None:
         try:
@@ -110,6 +115,7 @@ class ChappieVoiceController:
             normalize_message,
         )
         from chappie.voice.tts import PiperTTS
+        from chappie.voice.wake_word import ChappieWakeWord
 
         self._publish(
             ChappieMode.STARTING,
@@ -120,41 +126,64 @@ class ChappieVoiceController:
         listener = VoiceListener(DEFAULT_AUDIO_PATH)
         tts = PiperTTS()
         tts.warm_up()
+        wake_word = ChappieWakeWord()
+        acknowledgment_path = tts.cache_acknowledgment()
 
         async with ChappieMCPClient() as mcp_client:
             orchestrator = ChappieOrchestrator(mcp_client)
             self._ready.set()
-            self._publish_idle("Voice, memory, and MCP are online.")
 
             try:
-                while True:
-                    try:
-                        command = self._commands.get_nowait()
-                    except Empty:
-                        await asyncio.sleep(0.1)
-                        continue
+                while not self._stop_requested.is_set():
+                    self._wake_interrupt.clear()
+                    self._publish_sleeping(
+                        "Voice, memory, wake word, and MCP are online."
+                    )
 
-                    if command is None:
+                    wake_phrase = wake_word.wait(
+                        self._wake_interrupt
+                    )
+
+                    if self._stop_requested.is_set():
                         break
 
-                    if command == "talk":
-                        await self._run_conversation(
-                            listener=listener,
-                            orchestrator=orchestrator,
-                            tts=tts,
-                            initial_timeout_seconds=(
-                                INITIAL_COMMAND_TIMEOUT_SECONDS
-                            ),
-                            followup_timeout_seconds=(
-                                FOLLOWUP_TIMEOUT_SECONDS
-                            ),
-                            end_phrases=(
-                                CONVERSATION_END_PHRASES
-                                | SHUTDOWN_PHRASES
-                            ),
-                            normalize=normalize_message,
+                    manual_request = (
+                        self._manual_request.is_set()
+                    )
+                    self._manual_request.clear()
+
+                    if not wake_phrase and not manual_request:
+                        continue
+
+                    self._busy.set()
+
+                    if wake_phrase:
+                        self._publish(
+                            ChappieMode.LISTENING,
+                            "Yes, sir?",
+                            "Wake word detected. Preparing to listen.",
                         )
+                        tts.play(acknowledgment_path)
+
+                    await self._run_conversation(
+                        listener=listener,
+                        orchestrator=orchestrator,
+                        tts=tts,
+                        initial_timeout_seconds=(
+                            INITIAL_COMMAND_TIMEOUT_SECONDS
+                        ),
+                        followup_timeout_seconds=(
+                            FOLLOWUP_TIMEOUT_SECONDS
+                        ),
+                        end_phrases=(
+                            CONVERSATION_END_PHRASES
+                            | SHUTDOWN_PHRASES
+                        ),
+                        normalize=normalize_message,
+                    )
             finally:
+                self._ready.clear()
+                self._wake_interrupt.set()
                 await orchestrator.close()
 
     async def _run_conversation(
@@ -347,6 +376,19 @@ class ChappieVoiceController:
         }
 
         return phrase in accepted
+
+    def _publish_sleeping(
+        self,
+        detail: str,
+        *,
+        transcript: str = "",
+    ) -> None:
+        self._publish(
+            ChappieMode.SLEEPING,
+            'Sleeping — say "Hey Chappie."',
+            detail,
+            transcript=transcript,
+        )
 
     def _publish_idle(
         self,

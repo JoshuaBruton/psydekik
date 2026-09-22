@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Event
 
 import numpy as np
 import sherpa_onnx
@@ -104,8 +105,11 @@ class ChappieWakeWord:
             num_trailing_blanks=1,
         )
 
-    def wait(self) -> str:
-        """Block until the configured wake phrase is detected."""
+    def wait(
+        self,
+        stop_event: Event | None = None,
+    ) -> str:
+        """Block until wake detection or a caller requests a stop."""
 
         #
         # Rebuild the native KWS engine for every wake cycle.
@@ -131,7 +135,13 @@ class ChappieWakeWord:
             block_count = 0
 
             while True:
-                if shutdown.requested:
+                if (
+                    shutdown.requested
+                    or (
+                        stop_event is not None
+                        and stop_event.is_set()
+                    )
+                ):
                     return ""
 
                 samples, overflowed = (
