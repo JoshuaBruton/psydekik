@@ -9,7 +9,9 @@ from typing import Final
 
 
 PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parents[1]
-DEFAULT_INBOX: Final[Path] = PROJECT_ROOT / "drop-box"
+DEFAULT_INBOX: Final[Path] = (
+    PROJECT_ROOT / "drop-box" / "incoming"
+)
 DEFAULT_ASSETS_ROOT: Final[Path] = PROJECT_ROOT / "chappie" / "assets"
 
 IGNORED_SUFFIXES: Final[set[str]] = {

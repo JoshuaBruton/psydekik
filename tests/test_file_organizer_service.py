@@ -158,3 +158,14 @@ def test_status_lists_pending_files(
         "second.txt",
     ]
     assert status["known_extensions"] == 69
+
+
+def test_default_inbox_uses_incoming_directory() -> None:
+    from services.file_organizer_service import (
+        DEFAULT_INBOX,
+        PROJECT_ROOT,
+    )
+
+    assert DEFAULT_INBOX == (
+        PROJECT_ROOT / "drop-box" / "incoming"
+    )
