@@ -89,3 +89,7 @@ patches/
 # File-organizer runtime data
 chappie/assets/
 drop-box/incoming/
+
+# Chappie avatar artwork is part of the application UI.
+!chappie/assets/avatar/
+!chappie/assets/avatar/**

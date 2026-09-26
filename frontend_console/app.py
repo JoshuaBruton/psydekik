@@ -38,7 +38,7 @@ def build_app() -> bs.AppShell:
             text="Home",
             icon="house-fill",
         ):
-            home_page = HomePage()
+            home_page = HomePage(shell._internal)
 
         with nav.add_page(
             "chappie",

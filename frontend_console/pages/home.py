@@ -21,7 +21,7 @@ from frontend_console.state.chappie_state import ChappieSnapshot
 class HomePage:
     """Build and update the live bento-style home dashboard."""
 
-    def __init__(self) -> None:
+    def __init__(self, scheduler: Any) -> None:
         self.connection_label: Any
         self.last_updated_label: Any
         self.uptime_label: Any
@@ -47,7 +47,7 @@ class HomePage:
                 weights=[2, 1],
                 vertical_items="stretch",
             ):
-                self.chappie_card = ChappiePresenceCard()
+                self.chappie_card = ChappiePresenceCard(scheduler)
 
                 with bs.Column(
                     gap=16,
