@@ -278,8 +278,8 @@ Psydekik is under active development.
 * [x] Offline speech-to-text experimentation
 * [x] Local text-to-speech
 * [x] Live frontend system dashboard
-* [ ] Wake-word detection
-* [ ] Improved voice latency
+* [x] Wake-word detection
+* [x] Improved voice latency
 * [ ] Expanded MCP toolset
 * [ ] Chappie dashboard integration
 * [ ] Family services
