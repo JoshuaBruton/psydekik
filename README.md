@@ -72,7 +72,8 @@ System information is exposed through backend services and API endpoints rather 
 
 ### 🖥️ Live Frontend Dashboard
 
-<img width="1174" height="1102" alt="image" src="https://github.com/user-attachments/assets/5b58a615-c39b-4cd1-a00e-f6352700fff3" />
+<img width="1174" height="1102" alt="image" src="https://github.com/user-attachments/assets/27e18a5e-61f1-4a61-8e54-a870022181aa" />
+
 
 Psydekik includes a developing console-style frontend for viewing live system information and interacting with the platform.
 
