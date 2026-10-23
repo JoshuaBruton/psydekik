@@ -55,9 +55,6 @@ The system currently supports:
 * Audio playback
 * Voice-aware system responses
 
-The eventual goal is hands-free interaction through a wake phrase such as:
-
-> **"Hey Chappie."**
 
 ### 📊 Live System Intelligence
 
@@ -74,6 +71,8 @@ Chappie can retrieve real-time information from the Raspberry Pi, including:
 System information is exposed through backend services and API endpoints rather than being hardcoded into the assistant.
 
 ### 🖥️ Live Frontend Dashboard
+
+<img width="1174" height="1102" alt="image" src="https://github.com/user-attachments/assets/5b58a615-c39b-4cd1-a00e-f6352700fff3" />
 
 Psydekik includes a developing console-style frontend for viewing live system information and interacting with the platform.
 
